@@ -6,6 +6,12 @@ when correcting output that was wrong or incomplete on the wire.
 
 ## [Unreleased]
 
+### Fixed
+
+- Generated path-segment encoding keeps `:` and `@`, which RFC 3986 allows in a
+  segment, instead of sending `%3A` and `%40`. A server that routes on the
+  literal form, such as `GET /prices/XLON:LLOY`, now receives the URL it expects.
+
 ## [0.19.0] - 2026-09-26
 
 ### Added

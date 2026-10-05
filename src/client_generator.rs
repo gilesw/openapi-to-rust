@@ -331,14 +331,16 @@ impl CodeGenerator {
         };
 
         // Path-segment percent encoder, used by url construction (T5).
-        // Encodes per RFC3986 §3.3: only ALPHA, DIGIT, and `-._~` pass through;
-        // everything else becomes `%XX`.
+        // Unreserved bytes plus `:` and `@` pass through, as RFC 3986 §3.3 allows
+        // them in a segment and a server may route `%3A` and `:` differently;
+        // everything else, including `/`, `?`, `#` and `%`, becomes `%XX`.
         let path_encoder = quote! {
             fn __pct_encode_path_segment(s: &str) -> String {
                 let mut out = String::with_capacity(s.len());
                 for &b in s.as_bytes() {
                     match b {
-                        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~'
+                        | b':' | b'@' => {
                             out.push(b as char);
                         }
                         _ => {
