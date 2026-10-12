@@ -49,7 +49,7 @@ circleci/types.rs                                        384614    10072 6f27708
 cloudflare/REQUIRED_DEPS.toml                               787       19 09cccc57db93029b
 cloudflare/client.rs                                   14164566   369093 263c089be637fd2b
 cloudflare/mod.rs                                           446       17 ce0e733f646147da
-cloudflare/types.rs                                    16794350   390250 a2c8ec538e83083e
+cloudflare/types.rs                                    16786215   390040 49b29a93e8d06f10
 coda/REQUIRED_DEPS.toml                                     672       16 9e666f39c7301c02
 coda/client.rs                                           848417    21853 bfee52292599720a
 coda/mod.rs                                                 434       17 4e8b99caec52b623
@@ -235,4 +235,4 @@ writer/client.rs                                         191302     5007 33061e5
 writer/mod.rs                                               438       17 0435bf1552e493d1
 writer/types.rs                                          198394     4888 800dd8afe5798530
 #
-# specs: 56   files: 224   bytes: 330621909
+# specs: 56   files: 224   bytes: 330613774
