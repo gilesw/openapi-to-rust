@@ -4456,6 +4456,15 @@ impl SchemaAnalyzer {
         // placeholder depending on branch order.
         if !merged_properties.is_empty() || !merged_required.is_empty() || merged_variant.is_some()
         {
+            // A required name declared only by the union's branches belongs to
+            // the variant, which types it and decides per branch whether it
+            // must be present.
+            if let Some(variant) = &merged_variant {
+                let declared = self.union_declared_property_names(&variant.target)?;
+                merged_required.retain(|name| {
+                    merged_properties.contains_key(name) || !declared.contains(name)
+                });
+            }
             let mut additional_properties = if merged_properties
                 .values()
                 .any(|property| property.synthesized_required)
@@ -4635,6 +4644,50 @@ impl SchemaAnalyzer {
                 _ => return Ok(false),
             }
         }
+    }
+
+    /// Property names declared by any object reachable through the branches
+    /// of an analyzed union, including nested unions and flattened variants.
+    fn union_declared_property_names(&mut self, target: &str) -> Result<HashSet<String>> {
+        let mut names = HashSet::new();
+        let mut visited = HashSet::new();
+        let mut pending = vec![target.to_string()];
+        while let Some(target) = pending.pop() {
+            if !visited.insert(target.clone()) {
+                continue;
+            }
+            let schema_type = if let Some(analyzed) = self.resolved_cache.get(&target) {
+                analyzed.schema_type.clone()
+            } else if self.schemas.contains_key(&target) {
+                self.analyze_schema(&target)?.schema_type
+            } else {
+                continue;
+            };
+            match &schema_type {
+                SchemaType::Object {
+                    properties,
+                    variant,
+                    ..
+                } => {
+                    names.extend(properties.keys().cloned());
+                    pending.extend(variant.iter().map(|variant| variant.target.clone()));
+                }
+                SchemaType::Union { variants, .. } => {
+                    pending.extend(variants.iter().map(|variant| variant.target.clone()));
+                }
+                SchemaType::DiscriminatedUnion {
+                    discriminator_field,
+                    variants,
+                    ..
+                } => {
+                    names.insert(discriminator_field.clone());
+                    pending.extend(variants.iter().map(|variant| variant.type_name.clone()));
+                }
+                SchemaType::Reference { target } => pending.push(target.clone()),
+                _ => {}
+            }
+        }
+        Ok(names)
     }
 
     fn merge_allof_variant(
@@ -6314,9 +6367,9 @@ impl SchemaAnalyzer {
 
         let base = self.analyze_object_schema(schema, dependencies)?;
         let SchemaType::Object {
-            properties,
-            required,
-            additional_properties,
+            mut properties,
+            mut required,
+            mut additional_properties,
             ..
         } = base
         else {
@@ -6360,6 +6413,25 @@ impl SchemaAnalyzer {
             },
         );
         dependencies.insert(variant_name.clone());
+
+        // A required name declared only by the branches belongs to the variant,
+        // not to a placeholder on the base.
+        let declared = self.union_declared_property_names(&variant_name)?;
+        properties.retain(|name, property| {
+            let owned_by_variant = property.synthesized_required && declared.contains(name);
+            if owned_by_variant {
+                required.remove(name);
+            }
+            !owned_by_variant
+        });
+        if details.additional_properties.is_none()
+            && !Self::object_shape_needs_additional_property_carrier(details)
+            && !properties
+                .values()
+                .any(|property| property.synthesized_required)
+        {
+            additional_properties = ObjectAdditionalProperties::Closed;
+        }
 
         Ok(Some(SchemaType::Object {
             properties,

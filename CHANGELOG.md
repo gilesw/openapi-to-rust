@@ -6,6 +6,16 @@ when correcting output that was wrong or incomplete on the wire.
 
 ## [Unreleased]
 
+### Fixed
+
+- An object that pairs shared fields with a union, through `allOf` or as
+  sibling `properties` and `anyOf`/`oneOf`, no longer turns a `required` name
+  declared only by the union's branches into a required `serde_json::Value`
+  field on the shared struct. The branch keeps the typed field and its own
+  optionality. Cloudflare's DNS record responses list `data` as required
+  although only some record types carry it, so A and MX records failed to
+  deserialize, and `name`, `content` and `ttl` were untyped.
+
 ## [0.22.0] - 2026-10-06
 
 ### Added

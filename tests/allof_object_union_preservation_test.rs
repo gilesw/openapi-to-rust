@@ -102,6 +102,92 @@ fn object_union_allof_spec() -> Value {
                         }
                     ]
                 },
+                "RecordSharedFields": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "ttl": { "type": "number" }
+                    }
+                },
+                "ARecord": {
+                    "allOf": [
+                        { "$ref": "#/components/schemas/RecordSharedFields" },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "content": { "type": "string" },
+                                "type": { "type": "string", "enum": ["A"] }
+                            }
+                        }
+                    ]
+                },
+                "MXRecord": {
+                    "allOf": [
+                        { "$ref": "#/components/schemas/RecordSharedFields" },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "content": { "type": "string" },
+                                "priority": { "type": "number" },
+                                "type": { "type": "string", "enum": ["MX"] }
+                            }
+                        }
+                    ]
+                },
+                "CAARecord": {
+                    "allOf": [
+                        { "$ref": "#/components/schemas/RecordSharedFields" },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "content": { "type": "string" },
+                                "data": {
+                                    "type": "object",
+                                    "properties": {
+                                        "flags": { "type": "number" },
+                                        "tag": { "type": "string" }
+                                    }
+                                },
+                                "type": { "type": "string", "enum": ["CAA"] }
+                            }
+                        }
+                    ]
+                },
+                "RecordWithoutData": {
+                    "oneOf": [
+                        { "$ref": "#/components/schemas/ARecord" },
+                        { "$ref": "#/components/schemas/MXRecord" }
+                    ]
+                },
+                "RecordWithData": {
+                    "oneOf": [{ "$ref": "#/components/schemas/CAARecord" }]
+                },
+                "RecordResponse": {
+                    "type": "object",
+                    "required": ["name", "type", "content", "data", "ttl"],
+                    "allOf": [
+                        {
+                            "anyOf": [
+                                { "$ref": "#/components/schemas/RecordWithoutData" },
+                                { "$ref": "#/components/schemas/RecordWithData" }
+                            ]
+                        },
+                        {
+                            "type": "object",
+                            "required": ["id"],
+                            "properties": { "id": { "type": "string" } }
+                        }
+                    ]
+                },
+                "SiblingRecordResponse": {
+                    "type": "object",
+                    "required": ["name", "type", "content", "data", "ttl", "id"],
+                    "properties": { "id": { "type": "string" } },
+                    "anyOf": [
+                        { "$ref": "#/components/schemas/RecordWithoutData" },
+                        { "$ref": "#/components/schemas/RecordWithData" }
+                    ]
+                },
                 "GitpodOutputSpec": {
                     "type": "object",
                     "additionalProperties": false,
@@ -198,6 +284,25 @@ fn allof_objects_retain_inline_referenced_and_root_sibling_shapes() {
     assert!(required.contains("root_value"));
     assert!(required.contains("child_value"));
 
+    for name in ["RecordResponse", "SiblingRecordResponse"] {
+        let SchemaType::Object {
+            properties: record,
+            variant,
+            ..
+        } = &analysis.schemas[name].schema_type
+        else {
+            panic!("{name} should be an object with a flattened union");
+        };
+        assert!(variant.is_some(), "{name} must retain its union member");
+        assert!(record.contains_key("id"));
+        for field in ["name", "type", "content", "data", "ttl"] {
+            assert!(
+                !record.contains_key(field),
+                "{name}.{field} is declared by the union branches, not the shared fields"
+            );
+        }
+    }
+
     let SchemaType::Object {
         properties: output_spec,
         ..
@@ -272,6 +377,35 @@ where
     assert_eq!(serde_json::to_value(hydrated_again).unwrap(), output);
 }
 
+fn round_trip_records<T>()
+where
+    T: serde::de::DeserializeOwned + serde::Serialize,
+{
+    round_trip::<T>(serde_json::json!({
+        "id": "r1",
+        "name": "www.example.com",
+        "type": "A",
+        "content": "198.51.100.4",
+        "ttl": 1.0
+    }));
+    round_trip::<T>(serde_json::json!({
+        "id": "r2",
+        "name": "example.com",
+        "type": "MX",
+        "content": "mail.example.com",
+        "priority": 10.0,
+        "ttl": 3600.0
+    }));
+    round_trip::<T>(serde_json::json!({
+        "id": "r3",
+        "name": "example.com",
+        "type": "CAA",
+        "content": "0 issue \"letsencrypt.org\"",
+        "data": { "flags": 0.0, "tag": "issue" },
+        "ttl": 1.0
+    }));
+}
+
 fn main() {
     round_trip::<generated::RuleFeature>(serde_json::json!({
         "name": "card",
@@ -303,6 +437,8 @@ fn main() {
         "root_value": "root",
         "child_value": 7
     }));
+    round_trip_records::<generated::RecordResponse>();
+    round_trip_records::<generated::SiblingRecordResponse>();
     round_trip::<generated::GitpodOutputSpec>(serde_json::json!({
         "key": "coverage",
         "command": "collect-coverage",
