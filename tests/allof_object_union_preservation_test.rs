@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use openapi_to_rust::analysis::SchemaType;
 use openapi_to_rust::{CodeGenerator, GeneratorConfig, SchemaAnalyzer};
 use serde_json::{Value, json};
@@ -186,6 +188,61 @@ fn object_union_allof_spec() -> Value {
                     "anyOf": [
                         { "$ref": "#/components/schemas/RecordWithoutData" },
                         { "$ref": "#/components/schemas/RecordWithData" }
+                    ]
+                },
+                "FilterLeaf": {
+                    "type": "object",
+                    "required": ["key", "operation"],
+                    "properties": {
+                        "key": { "type": "string" },
+                        "operation": { "type": "string" },
+                        "value": { "type": "string" }
+                    }
+                },
+                "FilterNode": {
+                    "description": "A leaf filter or a nested group.",
+                    "type": "object",
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "required": ["kind", "filters"],
+                            "properties": {
+                                "kind": { "type": "string", "enum": ["group"] },
+                                "filters": {
+                                    "type": "array",
+                                    "items": { "$ref": "#/components/schemas/FilterNode" }
+                                }
+                            }
+                        },
+                        { "$ref": "#/components/schemas/FilterLeaf" }
+                    ]
+                },
+                "RestatedFilter": {
+                    "allOf": [
+                        { "$ref": "#/components/schemas/FilterNode" },
+                        {
+                            "description": "Supports nested groups.",
+                            "anyOf": [
+                                {
+                                    "description": "A group of child filters.",
+                                    "type": "object",
+                                    "required": ["kind", "filters"],
+                                    "properties": {
+                                        "kind": {
+                                            "description": "Marks a group.",
+                                            "type": "string",
+                                            "enum": ["group"]
+                                        },
+                                        "filters": {
+                                            "description": "Child filters.",
+                                            "type": "array",
+                                            "items": { "$ref": "#/components/schemas/FilterNode" }
+                                        }
+                                    }
+                                },
+                                { "$ref": "#/components/schemas/FilterLeaf" }
+                            ]
+                        }
                     ]
                 },
                 "GitpodOutputSpec": {
@@ -445,6 +502,17 @@ fn main() {
         "boolean": {}
     }));
     round_trip::<generated::GitpodOutputSpec>(serde_json::json!({}));
+    round_trip::<generated::RestatedFilter>(serde_json::json!({
+        "kind": "group",
+        "filters": [
+            { "key": "service", "operation": "eq", "value": "api" },
+            { "kind": "group", "filters": [] }
+        ]
+    }));
+    round_trip::<generated::RestatedFilter>(serde_json::json!({
+        "key": "status",
+        "operation": "exists"
+    }));
 }
 "##,
     )
@@ -466,6 +534,18 @@ fn main() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn allof_restating_a_union_up_to_annotations_resolves_to_that_union() {
+    let analysis = analyze();
+    let SchemaType::Reference { target } = &analysis.schemas["RestatedFilter"].schema_type else {
+        panic!(
+            "RestatedFilter should alias FilterNode, got {:?}",
+            analysis.schemas["RestatedFilter"].schema_type
+        );
+    };
+    assert_eq!(target, "FilterNode");
 }
 
 #[test]
