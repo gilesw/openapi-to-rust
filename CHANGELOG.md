@@ -20,7 +20,9 @@ when correcting output that was wrong or incomplete on the wire.
   with "intersects multiple union members". The current Cloudflare spec
   restates its Workers Observability filter union inline next to a `$ref` to
   it, which stopped the whole spec from generating. Members that are different
-  unions still fail with that diagnostic.
+  unions still fail with that diagnostic. Assertion data such as
+  `dependentRequired` is preserved, and `type: object` is ignored only when
+  every union branch explicitly requires an object.
 
 ## [0.22.0] - 2026-10-06
 

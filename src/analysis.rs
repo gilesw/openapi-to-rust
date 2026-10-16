@@ -1445,12 +1445,29 @@ fn strip_schema_annotations(value: &mut Value) {
                     members.values_mut().for_each(strip_schema_annotations);
                 }
             }
-            "enum" | "const" | "default" | "required" | "discriminator" => {}
-            _ => match child {
+            "allOf" | "anyOf" | "oneOf" | "prefixItems" => {
+                if let Some(items) = child.as_array_mut() {
+                    items.iter_mut().for_each(strip_schema_annotations);
+                }
+            }
+            "items" => match child {
                 Value::Array(items) => items.iter_mut().for_each(strip_schema_annotations),
-                Value::Object(_) => strip_schema_annotations(child),
-                _ => {}
+                _ => strip_schema_annotations(child),
             },
+            "additionalProperties"
+            | "additionalItems"
+            | "unevaluatedProperties"
+            | "unevaluatedItems"
+            | "contains"
+            | "propertyNames"
+            | "not"
+            | "if"
+            | "then"
+            | "else"
+            | "contentSchema" => strip_schema_annotations(child),
+            // Other keywords contain data, not schemas (notably dependentRequired).
+            // Preserve unknown keywords conservatively as well.
+            _ => {}
         }
     }
 }
@@ -4707,8 +4724,8 @@ impl SchemaAnalyzer {
     }
 
     /// The assertions of a member that is only a union, following one `$ref`.
-    /// `type: object` is ignored so a named union matches an inline restatement
-    /// that omits it.
+    /// `type: object` is ignored only when every branch already requires an
+    /// object, so a named object union can match an inline restatement.
     fn union_signature(&self, member: &Schema) -> Option<Value> {
         let schema = match member.reference() {
             Some(reference) => self.schemas.get(self.extract_schema_name(reference)?)?,
@@ -4717,7 +4734,19 @@ impl SchemaAnalyzer {
         let mut value = serde_json::to_value(schema).ok()?;
         strip_schema_annotations(&mut value);
         let object = value.as_object_mut()?;
-        if object.get("type").and_then(Value::as_str) == Some("object") {
+        if object.get("type").and_then(Value::as_str) == Some("object")
+            && ["anyOf", "oneOf"].iter().any(|keyword| {
+                object
+                    .get(*keyword)
+                    .and_then(Value::as_array)
+                    .is_some_and(|branches| {
+                        !branches.is_empty()
+                            && branches
+                                .iter()
+                                .all(|branch| self.union_branch_requires_object(branch))
+                    })
+            })
+        {
             object.remove("type");
         }
         let is_union = object.contains_key("anyOf") || object.contains_key("oneOf");
@@ -4725,6 +4754,30 @@ impl SchemaAnalyzer {
             .keys()
             .all(|key| matches!(key.as_str(), "anyOf" | "oneOf" | "discriminator"));
         (is_union && only_union).then_some(value)
+    }
+
+    /// A conservative proof: require an explicit object type, optionally
+    /// following one reference. Do not infer a type from object-only keywords
+    /// such as properties/required, which also accept scalars in JSON Schema.
+    fn union_branch_requires_object(&self, branch: &Value) -> bool {
+        let resolved;
+        let branch = if let Some(reference) = branch.get("$ref").and_then(Value::as_str) {
+            let Some(schema) = self
+                .extract_schema_name(reference)
+                .and_then(|name| self.schemas.get(name))
+            else {
+                return false;
+            };
+            let Ok(value) = serde_json::to_value(schema) else {
+                return false;
+            };
+            resolved = value;
+            &resolved
+        } else {
+            branch
+        };
+        branch.get("type").and_then(Value::as_str) == Some("object")
+            && branch.get("nullable").and_then(Value::as_bool) != Some(true)
     }
 
     /// Property names declared by any object reachable through the branches
